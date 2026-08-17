@@ -36,4 +36,7 @@ public class ExceptionMessages {
             EXCEPTION_MESSAGE_INVALID_AMOUNT = "invalid amount";
     public static final String EXCEPTION_MESSAGE_DUPLICATE_TRANSACTION =
             "duplicate transaction uuid";
+    public static final String EXCEPTION_MESSAGE_TRANSACTION_UNDER_REVIEW =
+            "Your transaction is under review and has not been completed. "
+            + "We will notify you when the review is finished.";
 }

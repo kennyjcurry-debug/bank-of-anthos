@@ -18,6 +18,7 @@ package anthos.samples.bankofanthos.ledgerwriter;
 
 import static anthos.samples.bankofanthos.ledgerwriter.ExceptionMessages.EXCEPTION_MESSAGE_DUPLICATE_TRANSACTION;
 import static anthos.samples.bankofanthos.ledgerwriter.ExceptionMessages.EXCEPTION_MESSAGE_INSUFFICIENT_BALANCE;
+import static anthos.samples.bankofanthos.ledgerwriter.ExceptionMessages.EXCEPTION_MESSAGE_TRANSACTION_UNDER_REVIEW;
 import static anthos.samples.bankofanthos.ledgerwriter.ExceptionMessages.EXCEPTION_MESSAGE_WHEN_AUTHORIZATION_HEADER_NULL;
 
 import com.auth0.jwt.JWTVerifier;
@@ -27,6 +28,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import io.micrometer.core.instrument.binder.cache.GuavaCacheMetrics;
 import io.micrometer.stackdriver.StackdriverMeterRegistry;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -61,12 +63,15 @@ public final class LedgerWriterController {
     private String localRoutingNum;
     private String balancesApiUri;
     private String version;
+    private int transferReviewThreshold;
 
     private Cache<String, Long> cache;
 
     public static final String READINESS_CODE = "ok";
     public static final String UNAUTHORIZED_CODE = "not authorized";
     public static final String JWT_ACCOUNT_KEY = "acct";
+    public static final String RULE_HIGH_VALUE_TRANSACTION_REVIEW =
+            "HIGH_VALUE_TRANSACTION_REVIEW";
 
     @Autowired
     RestTemplate restTemplate;
@@ -75,7 +80,16 @@ public final class LedgerWriterController {
     * Constructor.
     *
     * Initializes JWT verifier.
+    *
+    * @param transferReviewThreshold  transactions at or above this amount,
+    *                                 in integer cents, are held for
+    *                                 compliance review. Applies to every
+    *                                 transaction on this endpoint, incoming
+    *                                 deposits included. Treasury owns the
+    *                                 value.
     */
+    // Constructor injection keeps the review threshold settable in tests.
+    @SuppressWarnings("checkstyle:parameternumber")
     @Autowired
     public LedgerWriterController(
             JWTVerifier verifier,
@@ -85,13 +99,18 @@ public final class LedgerWriterController {
             @Value("${LOCAL_ROUTING_NUM}") String localRoutingNum,
             @Value("http://${BALANCES_API_ADDR}/balances")
                     String balancesApiUri,
-            @Value("${VERSION}") String version) {
+            @Value("${VERSION}") String version,
+            // Transactions at or above this amount, in integer cents, are
+            // held for compliance review. Default 1000000 cents = $10,000.
+            @Value("${TRANSFER_REVIEW_THRESHOLD:1000000}")
+                    int transferReviewThreshold) {
         this.verifier = verifier;
         this.transactionRepository = transactionRepository;
         this.transactionValidator = transactionValidator;
         this.localRoutingNum = localRoutingNum;
         this.balancesApiUri = balancesApiUri;
         this.version = version;
+        this.transferReviewThreshold = transferReviewThreshold;
         // Initialize cache to ignore duplicate transactions
         this.cache = CacheBuilder.newBuilder()
                             .recordStats()
@@ -127,7 +146,8 @@ public final class LedgerWriterController {
      * @param bearerToken  HTTP request 'Authorization' header
      * @param transaction  transaction to submit
      *
-     * @return  HTTP Status 200 if transaction was successfully submitted
+     * @return  HTTP Status 201 if transaction was successfully submitted,
+     *          HTTP Status 202 if it was held for compliance review
      */
     @PostMapping(value = "/transactions", consumes = "application/json")
     @ResponseStatus(HttpStatus.OK)
@@ -155,6 +175,25 @@ public final class LedgerWriterController {
             // validate transaction
             transactionValidator.validateTransaction(localRoutingNum,
                     jwt.getClaim(JWT_ACCOUNT_KEY).asString(), transaction);
+
+            // Hold transactions at or above the compliance review threshold.
+            // This deliberately covers every transaction on this endpoint,
+            // incoming deposits included, not just outgoing transfers.
+            // The boundary is inclusive: at the threshold is held, below is
+            // not. Nothing is written to the ledger and nothing is added to
+            // the dedupe cache, so a resubmission is held again rather than
+            // rejected as a duplicate.
+            if (transaction.getAmount() >= transferReviewThreshold) {
+                LOGGER.info(heldTransactionAuditEvent(
+                        transaction.getFromAccountNum(),
+                        transaction.getAmount(),
+                        transferReviewThreshold,
+                        Instant.now()));
+                return new ResponseEntity<>(
+                        EXCEPTION_MESSAGE_TRANSACTION_UNDER_REVIEW,
+                        HttpStatus.ACCEPTED);
+            }
+
             // Ensure sender balance can cover transaction.
             if (transaction.getFromRoutingNum().equals(localRoutingNum)) {
                 int balance = getAvailableBalance(
@@ -192,6 +231,35 @@ public final class LedgerWriterController {
             return new ResponseEntity<>(e.getMessage(),
                                               HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Format the audit event for a transaction held for compliance review.
+     *
+     * Records the account, the amount, the rule that fired, the configured
+     * value it fired against, and the timestamp. Deliberately takes the
+     * amount as integer cents rather than the Transaction itself, because
+     * Transaction.toString() renders a floating point dollar amount.
+     *
+     * @param account        the sending account number
+     * @param amountCents    the transaction amount, in integer cents
+     * @param thresholdCents the configured review threshold, in integer cents
+     * @param timestamp      when the rule fired
+     *
+     * @return  the audit event message
+     */
+    static String heldTransactionAuditEvent(String account,
+                                         int amountCents,
+                                         int thresholdCents,
+                                         Instant timestamp) {
+        return String.format(
+                "Transaction held for compliance review: rule=%s account=%s "
+                + "amountCents=%d thresholdCents=%d timestamp=%s",
+                RULE_HIGH_VALUE_TRANSACTION_REVIEW,
+                account,
+                amountCents,
+                thresholdCents,
+                timestamp);
     }
 
     /**
