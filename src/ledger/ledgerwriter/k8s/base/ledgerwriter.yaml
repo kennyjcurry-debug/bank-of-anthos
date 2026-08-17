@@ -51,6 +51,11 @@ spec:
           value: "true"
         - name: ENABLE_METRICS
           value: "true"
+        # Transactions at or above this amount, in cents, are held for
+        # compliance review, incoming deposits included.
+        # Treasury owns this value.
+        - name: TRANSFER_REVIEW_THRESHOLD
+          value: "1000000"
          # tell Java to obey container memory limits
         - name: JVM_OPTS
           value: "-XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap -Xms256m -Xmx512m"
