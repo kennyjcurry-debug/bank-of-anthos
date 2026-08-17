@@ -213,4 +213,4 @@ venv-*
 go/
 
 # GitHub Actions Google Cloud credentials JSON
-gha-creds-*.json
+gha-creds-*.json.claude/settings.local.json
