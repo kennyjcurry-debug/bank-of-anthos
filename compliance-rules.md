@@ -1,13 +1,9 @@
 # FinTechCo — engineering standards for ledger and payment services
 
-Draft. This is the file the review pass at beat 5 checks a change against. It stands in
-for what FinTechCo would write for themselves, so it should read like an internal
-standards doc, not like a prompt.
+Owner: Payments Engineering. Reviewed quarterly.
 
-Kept deliberately short. A standards file nobody reads is a standards file nobody
-follows, and a long one is worse on screen.
-
----
+Kept short on purpose. A standards file nobody reads is a standards file nobody
+follows, and a long one is worse.
 
 ## Configuration
 
