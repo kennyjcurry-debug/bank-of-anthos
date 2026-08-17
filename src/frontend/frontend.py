@@ -50,6 +50,10 @@ BALANCE_NAME = "balance"
 CONTACTS_NAME = "contacts"
 TRANSACTION_LIST_NAME = "transaction_list"
 
+
+class TransactionUnderReview(Exception):
+    """Raised when ledgerwriter holds a transaction for compliance review."""
+
 # pylint: disable-msg=too-many-locals
 # pylint: disable-msg=too-many-branches
 def create_app():
@@ -209,6 +213,9 @@ def create_app():
         - token is not valid
         - basic validation checks fail
         - response code from ledgerwriter is not 201
+
+        A 202 from ledgerwriter means the payment was held for compliance
+        review and was not written to the ledger.
         """
         token = request.cookies.get(app.config['TOKEN_NAME'])
         if not verify_token(token):
@@ -246,6 +253,12 @@ def create_app():
 
         except requests.exceptions.RequestException as err:
             app.logger.error('Error submitting payment: %s', str(err))
+        except TransactionUnderReview as review:
+            app.logger.info('Payment held for review: %s', str(review))
+            return redirect(url_for('home',
+                                    msg=str(review),
+                                    _external=True,
+                                    _scheme=app.config['SCHEME']))
         except UserWarning as warn:
             app.logger.error('Error submitting payment: %s', str(warn))
             msg = 'Payment failed: {}'.format(str(warn))
@@ -271,6 +284,9 @@ def create_app():
         - token is not valid
         - routing number == local routing number
         - response code from ledgerwriter is not 201
+
+        A 202 from ledgerwriter means the deposit was held for compliance
+        review and was not written to the ledger.
         """
         token = request.cookies.get(app.config['TOKEN_NAME'])
         if not verify_token(token):
@@ -313,6 +329,12 @@ def create_app():
 
         except requests.exceptions.RequestException as err:
             app.logger.error('Error submitting deposit: %s', str(err))
+        except TransactionUnderReview as review:
+            app.logger.info('Deposit held for review: %s', str(review))
+            return redirect(url_for('home',
+                                    msg=str(review),
+                                    _external=True,
+                                    _scheme=app.config['SCHEME']))
         except UserWarning as warn:
             app.logger.error('Error submitting deposit: %s', str(warn))
             msg = 'Deposit failed: {}'.format(str(warn))
@@ -339,6 +361,11 @@ def create_app():
             resp.raise_for_status()  # Raise on HTTP Status code 4XX or 5XX
         except requests.exceptions.HTTPError as http_request_err:
             raise UserWarning(resp.text) from http_request_err
+        if resp.status_code == 202:
+            # ledgerwriter held the transaction for compliance review.
+            # Nothing was written to the ledger, so there is nothing to
+            # propagate and no reason to wait below.
+            raise TransactionUnderReview(resp.text)
         # Short delay to allow the transaction to propagate to balancereader
         # and transaction-history
         sleep(0.25)

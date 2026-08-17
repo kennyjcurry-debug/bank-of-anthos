@@ -22,6 +22,12 @@ Implemented in Java with Spring Boot.
   - settings for the JVM. Used to obey container memory limits
 - `LOG_LEVEL`
   - the service-wide [log level](https://logging.apache.org/log4j/2.x/manual/customloglevels.html) (default: INFO)
+- `TRANSFER_REVIEW_THRESHOLD`
+  - optional. Transactions at or above this amount, in cents, are held for compliance review
+    rather than written to the ledger. This covers every transaction submitted to
+    `POST /transactions`, incoming deposits included, not just outgoing transfers. The boundary
+    is inclusive: a transaction exactly at the threshold is held. (default: 1000000, i.e.
+    $10,000)
   
 - ConfigMap `environment-config`:
   - `LOCAL_ROUTING_NUM`
